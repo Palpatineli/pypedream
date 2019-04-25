@@ -4,10 +4,8 @@ from enum import Enum
 from collections import namedtuple
 import sys
 import traceback
-import inspect
 import multiprocessing as mp
 from multiprocessing.managers import Namespace
-from multiprocessing.synchronize import Lock
 from queue import Full, Empty
 
 _MANAGER = mp.Manager()
@@ -34,12 +32,10 @@ def _get_namespace():
     return _MANAGER.Namespace()
 
 class _Stage(_QueueItem):
-    def __init__(self, worker_constructor, workers, maxsize, on_start, on_done, target, args, dependencies):
+    def __init__(self, worker_constructor, workers, maxsize, target, args, dependencies):
         self.worker_constructor = worker_constructor
         self.workers = workers
         self.maxsize = maxsize
-        self.on_start = on_start
-        self.on_done = on_done
         self.target = target
         self.args = args
         self.dependencies = dependencies
@@ -78,10 +74,6 @@ class _StageParams(
         namedtuple("_StageParams", [
             "input_queue",
             "output_queues",
-            "on_start",
-            "on_done",
-            "stage_namespace",
-            "stage_lock",
             "pipeline_namespace",
             "pipeline_error_queue",
             "index",
@@ -127,7 +119,7 @@ class _InputQueue(object):
     def __iter__(self):
         while not self.is_done():
             x = self.get()
-            if hasattr(self.pipeline_namespace, "error"):
+            if self.pipeline_namespace.error:
                 return
             if x != _QueueStatus.CONTINUE:
                 yield x
@@ -176,35 +168,12 @@ def _handle_exceptions(params):
 
 def _run_task(f_task, params):
     try:
-        if params.on_start is not None:
-            n_args = len(inspect.getargspec(params.on_start).args)
-            if n_args == 0:
-                args = params.on_start()
-            elif n_args == 1:
-                worker_info = WorkerInfo(index=params.index)
-                args = params.on_start(worker_info)
-            else:
-                args = None
-        else:
-            args = None
-        if args is None:
-            args = ()
-        elif not isinstance(args, tuple):
-            args = (args, )
         if params.input_queue:
             for x in params.input_queue:
-                f_task(x, args)
+                f_task(x)
         else:
-            f_task(args)
+            f_task()
         params.output_queues.done()
-        if params.on_done is not None:
-            with params.stage_lock:
-                params.stage_namespace.active_workers -= 1
-            stage_status = StageStatus(
-                namespace=params.stage_namespace,
-                lock=params.stage_lock,
-            )
-            params.on_done(stage_status, *args)
     except BaseException as e:
         try:
             params.pipeline_error_queue.put((type(e), e, "".join(traceback.format_exception(*sys.exc_info()))))
@@ -214,13 +183,13 @@ def _run_task(f_task, params):
 
 def _map(f, params):
     @_handle_exceptions(params)
-    def f_task(x, args):
-        y = f(x, *args)
+    def f_task(x):
+        y = f(x)
         params.output_queues.put(y)
 
     _run_task(f_task, params)
 
-def map(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0, on_start=None, on_done=None):
+def map(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0):
     """Creates a stage that maps a function `f` over the data. Its intended to behave like
     python's built-in `map` function but with the added concurrency.
     Note that because of concurrency order is not guaranteed.
@@ -241,15 +210,12 @@ def map(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0, on_start=None, on
         If the `stage` parameters is given then this function returns a new stage, else it returns a `Partial`.
     """
     if stage == _QueueStatus.UNDEFINED:
-        return Partial(lambda stage: map(
-            f, stage, workers=workers, maxsize=maxsize, on_start=on_start, on_done=on_done))
+        return Partial(lambda stage: map(f, stage, workers=workers, maxsize=maxsize))
     stage = _to_stage(stage)
     return _Stage(
         worker_constructor=mp.Process,
         workers=workers,
         maxsize=maxsize,
-        on_start=on_start,
-        on_done=on_done,
         target=_map,
         args=(f, ),
         dependencies=[stage],
@@ -257,13 +223,13 @@ def map(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0, on_start=None, on
 
 def _filter(f, params):
     @_handle_exceptions(params)
-    def f_task(x, args):
-        if f(x, *args):
+    def f_task(x):
+        if f(x):
             params.output_queues.put(x)
 
     _run_task(f_task, params)
 
-def filter(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0, on_start=None, on_done=None):
+def filter(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0):
     """
     Creates a stage that filter the data given a predicate function `f`. It is intended to behave
     like python's built-in `filter` function but with the added concurrency.
@@ -286,23 +252,20 @@ def filter(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0, on_start=None,
     """
     if stage == _QueueStatus.UNDEFINED:
         return Partial(lambda stage: filter(
-            f, stage, workers=workers, maxsize=maxsize, on_start=on_start, on_done=on_done))
+            f, stage, workers=workers, maxsize=maxsize))
     stage = _to_stage(stage)
     return _Stage(
         worker_constructor=mp.Process,
         workers=workers,
         maxsize=maxsize,
-        on_start=on_start,
-        on_done=on_done,
         target=_filter,
         args=(f, ),
         dependencies=[stage],
     )
 
 def _concat(params):
-    def f_task(x, args):
+    def f_task(x):
         params.output_queues.put(x)
-
     _run_task(f_task, params)
 
 def concat(stages, maxsize=0):
@@ -320,8 +283,6 @@ def concat(stages, maxsize=0):
         worker_constructor=mp.Process,
         workers=1,
         maxsize=maxsize,
-        on_start=None,
-        on_done=None,
         target=_concat,
         args=tuple(),
         dependencies=stages,
@@ -336,10 +297,9 @@ def _to_stage(obj):
         raise ValueError("Object {obj} is not iterable".format(obj=obj))
 
 def _from_iterable(iterable, params):
-    def f_task(args):
+    def f_task():
         for x in iterable:
             params.output_queues.put(x)
-
     _run_task(f_task, params)
 
 def from_iterable(iterable=_QueueStatus.UNDEFINED, maxsize=None):
@@ -359,8 +319,6 @@ def from_iterable(iterable=_QueueStatus.UNDEFINED, maxsize=None):
         worker_constructor=mp.Process,
         workers=1,
         maxsize=None,
-        on_start=None,
-        on_done=None,
         target=_from_iterable,
         args=(iterable, ),
         dependencies=[],
@@ -396,7 +354,7 @@ def _build_queues(stage: _Stage, stage_input_queue: _InputQueueDict,
 
 def _to_iterable(stage, maxsize):
     pipeline_namespace = _MANAGER.Namespace()
-    delattr(pipeline_namespace, "error")
+    pipeline_namespace.error = False  # type: ignore
     pipeline_error_queue: mp.Queue = mp.Queue()
     input_queue = _InputQueue(maxsize, stage.workers, pipeline_namespace)
     stage_input_queue, stage_output_queues = _build_queues(
@@ -409,21 +367,10 @@ def _to_iterable(stage, maxsize):
     stage_output_queues[stage] = _OutputQueueList([input_queue])
     processes = []
     for _stage in stage_output_queues:
-        if _stage.on_done is not None:
-            stage_lock: Lock = mp.Lock()
-            stage_namespace = _get_namespace()
-            stage_namespace.active_workers = _stage.workers
-        else:
-            stage_lock = None
-            stage_namespace = None
         for index in range(_stage.workers):
             stage_params = _StageParams(
                 output_queues=stage_output_queues[_stage],
                 input_queue=stage_input_queue.get(_stage, None),
-                on_start=_stage.on_start,
-                on_done=_stage.on_done,
-                stage_lock=stage_lock,
-                stage_namespace=stage_namespace,
                 pipeline_namespace=pipeline_namespace,
                 pipeline_error_queue=pipeline_error_queue,
                 index=index,
@@ -436,7 +383,7 @@ def _to_iterable(stage, maxsize):
     try:
         for x in input_queue:
             yield x
-        if hasattr(pipeline_namespace, "error"):
+        if pipeline_namespace.error:  # type: ignore
             error_class, _, trace = pipeline_error_queue.get()
             raise error_class("\n\nOriginal {trace}".format(trace=trace))
         for p in processes:
