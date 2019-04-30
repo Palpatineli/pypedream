@@ -1,0 +1,25 @@
+{
+    "version": 1,
+    "formatters": {
+        "detailed": {
+            "class": "logging.Formatter",
+            "format": "[%(levelname)-8s] %(asctime)s: %(message)s"
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "level": "INFO"
+        },
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": "tasklog.log",
+            "mode": "w",
+            "formatter": "detailed"
+        }
+    },
+    "root": {
+        "level": "DEBUG",
+        "handlers": ["console", "file"]
+    }
+}

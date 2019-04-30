@@ -19,7 +19,7 @@ setup(
     author_email='mail@keji.li',
     install_requires=[],
     setup_requires=["pytest-runner"],
-    tests_require=["pytest", "pypeln"],
+    tests_require=["pytest", "multiprocessing_logging"],
     description='matplotlib customizations and customized ploting functions',
     long_description=long_description
 )

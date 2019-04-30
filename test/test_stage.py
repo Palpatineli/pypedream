@@ -29,4 +29,6 @@ def test_bifurcate():
     step1_2 = pr.map(slow_add2, range(10, 20), workers=4)
     _ = pr.map(slow_add3, [step1, step1_2], workers=4) | list
     assert(perf_counter() - old_time < 1.0)
+
+test_bifurcate()
 ##

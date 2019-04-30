@@ -167,26 +167,18 @@ def _handle_exceptions(params):
     return handle_exceptions
 
 def _run_task(f_task, params):
-    try:
-        if params.input_queue:
-            for x in params.input_queue:
-                f_task(x)
-        else:
-            f_task()
-        params.output_queues.done()
-    except BaseException as e:
-        try:
-            params.pipeline_error_queue.put((type(e), e, "".join(traceback.format_exception(*sys.exc_info()))))
-            params.pipeline_namespace.error = True
-        except BaseException as e:
-            print(e)
+    if params.input_queue:
+        for x in params.input_queue:
+            f_task(x)
+    else:
+        f_task()
+    params.output_queues.done()
 
 def _map(f, params):
     @_handle_exceptions(params)
     def f_task(x):
         y = f(x)
         params.output_queues.put(y)
-
     _run_task(f_task, params)
 
 def map(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0):
@@ -226,7 +218,6 @@ def _filter(f, params):
     def f_task(x):
         if f(x):
             params.output_queues.put(x)
-
     _run_task(f_task, params)
 
 def filter(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0):
@@ -264,6 +255,7 @@ def filter(f, stage=_QueueStatus.UNDEFINED, workers=1, maxsize=0):
     )
 
 def _concat(params):
+    @_handle_exceptions(params)
     def f_task(x):
         params.output_queues.put(x)
     _run_task(f_task, params)
