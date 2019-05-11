@@ -20,6 +20,7 @@ setup(
     install_requires=[],
     setup_requires=["pytest-runner"],
     tests_require=["pytest", "multiprocessing_logging"],
+    extras_require={"print": ["print-tree2"], "draw": ["pygraphviz", "networkx"]},
     description='matplotlib customizations and customized ploting functions',
     long_description=long_description
 )
