@@ -1,7 +1,7 @@
-from typing import Any, List, Callable, Dict, Optional, Tuple
+from typing import Any, List, Callable, Dict, Optional
 from pathlib import Path
 from datetime import datetime
-from time import mktime
+from time import mktime, time as now
 from logging import Logger
 from .fileobj import FileObj, Zip7Cacher
 
@@ -34,14 +34,7 @@ class Task(object):
         Args:
             dependency: a previous Task, a list of Tasks or None or input node
         """
-        if type(dependency) == type(self):
-            self.dependencies = [dependency]
-            if dependency.__time__ > self.__time__:
-                self.__time__ = dependency.__time__
-        else:
-            self.dependencies = dependency
-            if dependency is not None:
-                self.__time__ = max(max(x.__time__ for x in dependency), self.__time__)
+        self.dependencies = [dependency] if type(dependency) == type(self) else dependency
         return self
 
     def __str__(self, level: int = 0) -> str:
@@ -50,19 +43,22 @@ class Task(object):
         else:
             return self.__name__ + ": " + datetime.fromtimestamp(self.__time__).isoformat()
 
-    def _update_time(self, name: str) -> float:
+    def _needs_update(self, name, logger) -> bool:
         cache = self.file_cacher(self.path().joinpath(name))
+        truth_flag = False
         if self.dependencies is not None:
-            self._cache_time = min(cache.time(), min(x._update_time(name) for x in self.dependencies))
-        else:
-            self._cache_time = cache.time()
-        return self._cache_time
+            for x in self.dependencies:
+                if x._needs_update(name, logger):
+                    truth_flag = True
+        if truth_flag:
+            logger.info(f"[Cache Miss] due to dependency. {name}: {self.__name__}")
+            return True
+        if (cache.time() < self.__time__):
+            logger.info(f"[Cache Miss] self. {name}: {self.__name__}")
+            return True
+        return False
 
     def run(self, name: str, logger: Logger, args: Dict[str, Any]) -> Any:
-        self._update_time(name)
-        return self._run(name, logger, args)
-
-    def _run(self, name: str, logger: Logger, args: Dict[str, Any]) -> Any:
         """Runs the self.__fn__ if not have up-to-date cache, else return cached data.
         Update-to-date cache has mtime larger then the Task object.
         Use data input from args dict passed from the backend if supplied else calculate dependencies.
@@ -70,16 +66,20 @@ class Task(object):
         If has no dependencies and input not supplied, raise a ValueError.
         """
         cache = self.file_cacher(self.path().joinpath(name))
-        result = cache.load(self.__time__) if (self.__time__ < self._cache_time) else None
-        if result is not None:  # if we have cached result then use result
-            logger.info(f"loading interim data for {self.__name__}: {name}")
-        elif self.__name__ in args:  # if has named input in args dict then don't calculate from dependencies
-            logger.info(f"using input data for {self.__name__}: {name}")
+        if not self._needs_update(name, logger):
+            logger.info(f"[Cache Hit] loading interim data. {self.__name__}: {name}")
+            result = cache.load(self.__time__)
+        elif self.__name__ in args:
+            logger.debug(f"[Cache Miss] {self.__name__}: {name} "
+                         f"| time: {cache.time()} -> {self.__time__}")
+            logger.info(f"[Cache Miss] using input args. {self.__name__}: {name}")
             result = self.__fn__(args[self.__name__], *self.extra_args)
             cache.save(result)
-        elif self.dependencies is not None:  # use input calculated from dependencies
-            prev_args = [task._run(name, logger, args) for task in self.dependencies]
-            logger.info(f"computing output data for {self.__name__}: {name}")
+        elif self.dependencies is not None:
+            logger.debug(f"[Cache Miss] {self.__name__}: {name} "
+                         f"| time: {cache.time()} -> {self.__time__}")
+            prev_args = [task.run(name, logger, args) for task in self.dependencies]
+            logger.info(f"[Cache Miss] using dependencies. {self.__name__}: {name}")
             result = self.__fn__(*(tuple(prev_args) + self.extra_args))
             cache.save(result)
         else:

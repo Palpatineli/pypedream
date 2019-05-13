@@ -51,7 +51,8 @@ class Zip7Cacher(FileObj):
     def _load(file_path: str) -> Optional[Any]:
         basename, ext = splitext(file_path)
         if ext == ".7z":
-            sp.run(["7z", "e", file_path, f"-o{split(basename)[0]}"])
+            with open(devnull, 'w') as fnull:
+                sp.run(["7z", "e", file_path, f"-o{split(basename)[0]}"], stdout=fnull)
         elif ext != ".pkl":
             return None
         with open(basename + ".pkl", 'rb') as bfp:
@@ -68,6 +69,6 @@ class Zip7Cacher(FileObj):
         with open(save_path, 'wb') as fp:
             pkl.dump(obj, fp)
         if save_path.stat().st_size > SIZE_THRESHOLD:
-            fnull = open(devnull, 'w')
-            sp.run(["7z", "a", "-mx=1", save_path.with_suffix(".7z"), save_path], stdout=fnull)
+            with open(devnull, 'w') as fnull:
+                sp.run(["7z", "a", "-mx=1", save_path.with_suffix(".7z"), save_path], stdout=fnull)
             save_path.unlink()
