@@ -1,10 +1,12 @@
-from typing import Any, List, Callable, Optional, Tuple, Type
+from typing import Any, List, Callable, Optional, Tuple, Type, Union
 from inspect import getfullargspec
 from pathlib import Path
 from datetime import datetime
 from time import mktime
+from multiprocessing import Pool, cpu_count
 from logging import Logger
 from .fileobj import FileObj, Zip7Cacher, InputObj
+from .logger import getLogger
 
 class TaskMixin(object):
     save_folder = Path("")
@@ -135,3 +137,18 @@ class Input(TaskMixin):
         loader = self.__loader__(self.save_folder, name)
         logger.debug(f"[Input] read input file. {self.__name__}: {name}")
         return loader.load(*self.extra_args)
+
+def get_result(cases: list, tasks: Union[Task, List[Task]], name: str = "default") -> list:
+    logger = getattr(get_result, "logger", None)
+    if logger is None:
+        logger = getLogger(name, name + ".log")
+        get_result.logger = logger  # type: ignore
+    pool = Pool(max(1, cpu_count() - 5))
+    params = [(case, logger) for case in cases]
+    if isinstance(tasks, Task):
+        return pool.starmap(tasks.run, params)
+    else:
+        output = list()
+        for task in tasks:
+            output.append(pool.starmap(task.run, params))
+        return output

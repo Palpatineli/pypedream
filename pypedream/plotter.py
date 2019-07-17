@@ -26,13 +26,16 @@ try:
 
     EDGE_COLOR = "#5688c7ff"
 
-    def draw_nx(graph: nx.DiGraph, ax=None, prog: Optional[str] = 'dot', args: tuple = ()):
+    def draw_nx(graph: nx.DiGraph, ax=None, prog: Optional[str] = 'dot', args: Optional[tuple] = None):
         nodes: Dict[str, list] = {key: list() for key in ("input", "output", "internal")}
         time_dict = dict()
         for key, value in graph.nodes.items():
             nodes[value['ntype']].append(key)
             time_dict[key] = datetime.fromtimestamp(value['time']).strftime("%m/%dT%H:%M")
-        layout = nx.nx_agraph.graphviz_layout(graph, prog=prog, args=args)
+        if args is None:
+            layout = nx.nx_agraph.graphviz_layout(graph, prog=prog)
+        else:
+            layout = nx.nx_agraph.graphviz_layout(graph, prog=prog, args=args)
         label_displaced = {key: (x, y - 25.0) for key, (x, y) in layout.items()}
         nx.draw_networkx(graph, layout, with_labels=True, ax=ax, nodelist=nodes["input"], node_shape='h',
                          node_color="#FB9F89FF", edge_color=EDGE_COLOR)
