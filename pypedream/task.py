@@ -5,8 +5,8 @@ from datetime import datetime
 from time import mktime
 from multiprocessing import Pool, cpu_count
 from logging import Logger
-from .fileobj import FileObj, Zip7Cacher, InputObj
-from .logger import getLogger
+from .fileobj import FileObj, Zip7Cacher, InputObj  # type: ignore
+from .logger import getLogger  # type: ignore
 
 class TaskMixin(object):
     save_folder = Path("")
@@ -103,7 +103,9 @@ class Task(TaskMixin):
             try:
                 result = self.__fn__(*(tuple(prev_args) + self.extra_args))
             except Exception as e:
+                import traceback
                 logger.error(f"[Exception] stage: {self.__name__}, case: {name}")
+                logger.error(traceback.format_exc())
                 raise e
             cache.save(result)
         else:
@@ -131,19 +133,33 @@ class Input(TaskMixin):
         return self.__name__ + "[input]: " + datetime.fromtimestamp(self.__time__).isoformat()
 
     def _needs_update(self, name: str, logger: Logger) -> Tuple[bool, float]:
-        return False, (max(self.__time__, self.__loader__(self.save_folder, name).time()))
+        try:
+            timestamp = (max(self.__time__, self.__loader__(self.save_folder, name).time()))
+        except FileNotFoundError:
+            timestamp = 0
+        except Exception as e:
+            import traceback
+            logger.error(f"[Exception] stage: {self.__name__}, case: {name}")
+            logger.error(traceback.format_exc())
+            raise e
+        return False, timestamp
 
     def run(self, name: str, logger: Logger) -> Any:
-        loader = self.__loader__(self.save_folder, name)
-        logger.debug(f"[Input] read input file. {self.__name__}: {name}")
-        return loader.load(*self.extra_args)
+        try:
+            loader = self.__loader__(self.save_folder, name)
+            logger.debug(f"[Input] read input file. {self.__name__}: {name}")
+            res = loader.load(*self.extra_args)
+        except Exception as e:
+            logger.error(f"[Exception] input: {self.__name__}, case: {name}")
+            raise e
+        return res
 
 def get_result(cases: list, tasks: Union[Task, List[Task]], name: str = "default") -> list:
     logger = getattr(get_result, "logger", None)
     if logger is None:
-        logger = getLogger(name, name + ".log")
+        logger = getLogger(name, str(name + ".log"))
         get_result.logger = logger  # type: ignore
-    pool = Pool(max(1, cpu_count() - 5))
+    pool = Pool(max(1, cpu_count() - 3))
     params = [(case, logger) for case in cases]
     if isinstance(tasks, Task):
         return pool.starmap(tasks.run, params)

@@ -1,4 +1,4 @@
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from os import devnull
 import pickle as pkl
 import subprocess as sp
@@ -8,6 +8,7 @@ SIZE_THRESHOLD = 204800
 
 class FileObj(object):
     """Save and load cached data. Implement this class to cache file in non-pickle format."""
+
     def __init__(self, file_path: Path):
         self.file_path = file_path.resolve().with_suffix("")
 
@@ -44,6 +45,7 @@ class InputObj(object):
 
 class Zip7Cacher(FileObj):
     """Pickle the file and then 7z it if it's too big."""
+
     def time(self) -> float:
         result = self._get_recent(self.file_path)
         return 0 if result is None else result.stat().st_mtime

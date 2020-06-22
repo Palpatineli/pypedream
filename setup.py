@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 import subprocess
 
@@ -14,12 +14,12 @@ except Exception as error:
 setup(
     name='pypedream',
     version='0.1.0',
-    packages=['pypedream'],
+    packages=find_packages(),
     author='Keji Li',
     author_email='mail@keji.li',
-    install_requires=[],
-    setup_requires=["pytest-runner"],
-    tests_require=["pytest", "multiprocessing_logging"],
+    install_requires=["multiprocessing_logging"],
+    include_package_data=True,
+    tests_require=["pytest", "pytest-runner"],
     extras_require={"print": ["print-tree2"], "draw": ["pygraphviz", "networkx"]},
     description='matplotlib customizations and customized ploting functions',
     long_description=long_description
